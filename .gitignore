@@ -1,0 +1,19 @@
+# Local source snapshots, device data, toolchains and editor state
+.local/
+.android-sdk/
+.jdk17/
+.claude/
+.serena/
+.idea/
+.DS_Store
+**/.DS_Store
+tv-backup-*/
+logs/
+*.log
+# Generated artifacts and private signing material
+out/
+*.apk
+*.jks
+*.keystore
+.env
+.env.*

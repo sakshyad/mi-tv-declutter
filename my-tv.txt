@@ -1,0 +1,27 @@
+off com.google.android.tvrecommendations
+off com.google.android.backdrop
+off com.android.dreams.basic
+off com.google.android.feedback
+off com.android.printspooler
+off com.android.htmlviewer
+off com.miui.tv.analytics
+off com.xiaomi.statistic
+off com.mitv.tvhome.mitvplus
+off com.mitv.tvhome.michannel
+off com.xm.webcontent
+off com.xiaomi.mitv.handbook
+off com.xiaomi.mimusic2
+off com.mitv.tvhome.atv
+off com.google.android.youtube.tvmusic
+off com.google.android.marvin.talkback
+off com.xiaomi.mitv.tvmanager
+off com.mitv.gallery
+off com.xiaomi.mitv.mediaexplorer
+off com.mitv.videoplayer
+off com.spotify.tv.android
+off com.teamviewer.quicksupport.market
+off com.airconsole.androidtv
+secure screensaver_enabled 0
+secure screensaver_activate_on_sleep 0
+secure screensaver_activate_on_dock 0
+system screen_off_timeout 1800000
