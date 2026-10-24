@@ -216,3 +216,119 @@ Note: if I later run plain `install.sh` after deleting `out/`, it reinstalls the
 - Code: `src/com/ansub/tvhome/MainActivity.java` in `buildTiles()`. The row count includes those extra tiles, and they're placed with `gridX/gridY` like the apps instead of on a separate bottom row.
 - Rebuilt with build.sh and installed with `adb install -r out/tvhome.apk` (same key, so the tile order is kept). Checked on the TV: Add app is at the end of row 2.
 - Undo: `git checkout src/com/ansub/tvhome/MainActivity.java` loses *all* home screen code changes; to undo only this one, put back the old "Bottom row" block (see `git diff`). Then rebuild and install.
+
+## Home v2: Batman wallpaper and white-logo dock (2026-10-23)
+
+Built and installed from `mi-tv-declutter/` only. The version 1 snapshot and the original home screen app on the TV were not changed.
+
+- **Own app ID:** `com.ansub.tvhome.v2` ("Home v2"), installed next to the original `com.ansub.tvhome`. Both are on the TV; the Home button opens whichever is the default.
+- **Switch:** `sh v2.sh 192.0.2.10 use v1` (original) or `use v2`. `sh v2.sh 192.0.2.10 remove` goes back to v1 and uninstalls v2. Don't use `install.sh`/`undo.sh` for v2: they're written for the original app ID.
+- **Installed with:** `sh v2.sh 192.0.2.10 install` (installs `out/tvhome.apk`, sends the app list once, makes v2 the home screen). Home now opens `com.ansub.tvhome.v2/com.ansub.tvhome.MainActivity`.
+- **Look:** the Batman wallpaper (`assets/wallpaper.jpg`, from `~/Downloads/wp8994428-dark-batman-4k-wallpapers.jpg`) with black fading in over the lower half; the time top left in Outfit (no date, no weather); Inputs, Settings and Wi-Fi as bare icons top right; one row of 12 white logos (11 apps + Add app), six on screen, sliding sideways; the focused logo grows, its name fades in, and a glow in the app's colour follows it.
+- **Logos** (`assets/logos/<package>.png`, white on transparent): Netflix, Prime Video, YouTube, Apple TV, Play Store from Simple Icons; JioHotstar star, JioCinema clapper, ZEE5 and Sony LIV ("SONY" wordmark) from Wikimedia Commons; Sony LIV's "liv", AirDroid Cast (its own monochrome icon) and Miracast (its TV banner) from the apps on the TV. An app with no file there shows its banner small instead.
+- **Font:** `assets/fonts/Outfit.ttf` (SIL Open Font License, `assets/fonts/OFL.txt`).
+- **Code:** `src/com/ansub/tvhome/MainActivity.java` (wallpaper background, dock, glow, bare icons), `AndroidManifest.xml` (new ID and name), `build.sh` (adds `-A assets`), new `v2.sh`.
+- **Checked on the TV:** dock scrolls to all 12, glow follows, Up reaches the top icons, OK opened YouTube, Home came back to v2.
+- **Undo:** `sh v2.sh 192.0.2.10 use v1` (keeps v2 installed) or `remove` (uninstalls it).
+
+## Home v3 (Marquee + Duotone) and a 24-hour clock (2026-10-23)
+
+- **New:** `com.ansub.tvhome.v3` ("Home v3"): the same home screen as v2, plus the wallpaper tinted at 45% in the focused app's colour (Netflix red, Prime blue, …), fading along with the glow. Built from the same code with `VARIANT=v3 sh build.sh` (`build.sh` writes `out/AndroidManifest.xml` with the v3 ID and a `Variant.DUOTONE` flag). The tint is a colour filter on the wallpaper, no extra layer.
+- **Clock in v2 and v3:** always 24-hour (`HH:mm`), in the original home screen's clock font (the TV's MiLan Pro SemiBold), same size as before.
+- **Installed:** `sh v2.sh 192.0.2.10 install v2` (update, app order kept) then `install v3` (first install, gets the app list). Home now opens **v3**. All three are on the TV: `com.ansub.tvhome`, `.v2`, `.v3`.
+- **v2.sh now:** `install v2|v3` (builds that one, then installs), `use v1|v2|v3`, `remove` (back to v1, uninstalls v2 and v3). On an update it no longer re-sends the app list, so arrangements made on the TV stay.
+- **Checked on the TV:** v3 tints red on Netflix and blue on Prime Video; clock shows 16:22.
+- **Undo:** `sh v2.sh 192.0.2.10 use v2` (or `use v1`). To drop only v3: `adb -s 192.0.2.10:5555 uninstall com.ansub.tvhome.v3` after switching away from it.
+
+## Home v3: new app order, JioCinema off the home screen (2026-10-23)
+
+- v3 dock now: Apple TV, Prime Video, JioHotstar, Netflix, ZEE5, Sony LIV, YouTube, AirDroid Cast, Miracast, Play Store, then Add app. JioCinema (`com.jio.media.stb.ondemand`) is off the v3 home screen only; the app is still installed, and v1/v2 still show it.
+- Command: `adb shell am start -n com.ansub.tvhome.v3/com.ansub.tvhome.MainActivity --es stamp "$(date +%s)" --es apps "com.apple.atve.androidtv.appletv,com.amazon.amazonvideo.livingroom,in.startv.hotstar,com.netflix.ninja,com.graymatrix.did,com.sonyliv,com.google.android.youtube.tv,com.sand.aircasttv,com.xiaomi.mitv.smartshare,com.android.vending"`. Saved on the TV inside v3, so it survives updates (`v2.sh install v3` only sends a list on a first install).
+- Checked on the TV with a screenshot.
+- Undo: add JioCinema back with the remote (Add app), or run the same command with `,com.jio.media.stb.ondemand` added to the end.
+
+## Home v3: steadier red tint, and a bigger, softer clock (2026-10-23)
+
+- Moving from JioHotstar to Netflix seemed to shift Batman up. The image never moved (0 px in screenshots). The red tint was burning the cowl out to flat red while the chest stayed dark. `duotone()` now caps how hard it pushes one colour channel, so red highlights keep their detail. Red tints come out a little darker.
+- Clock (v2 and v3): 84 px → 100 px, and 75% opaque instead of solid white.
+- Installed with `sh v2.sh 192.0.2.10 install v2` and then `install v3`. Home opens v3. The app order on the TV stayed as it was.
+- Undo: in `src/com/ansub/tvhome/MainActivity.java`, set `push` back to `1f` and the clock back to `px(84)`, remove `time.setAlpha(0.75f)`, then run both installs again.
+
+## True black around Batman, and the clock at 40% see-through (2026-10-23)
+
+- The wallpaper has a faint grey haze around Batman (levels 4-20 of 255). The TV lifts it, and v3 also tints it, so it showed as faded colour. A new `blackPoint()` colour filter in `MainActivity.java` turns everything at level 20 or below into true black and stretches the rest back to full range. It applies in v2 and v3. Haze pixels above the dock dropped from about 105,000 to about 13,000 in screenshots.
+- Clock: `time.setAlpha(0.6f)`, which is 40% see-through.
+- Installed with `sh v2.sh 192.0.2.10 install v2` and then `install v3`. Home opens v3.
+- Undo: set `cut = 0f` in `blackPoint()` and the clock alpha back to `0.75f`, then run both installs again.
+
+## Clock at 10% see-through (2026-10-23)
+
+- `time.setAlpha(0.9f)` in `MainActivity.java`. Installed v2 and then v3; Home opens v3.
+- Undo: set it back to `0.6f` and run both installs again.
+
+## Clock at 80% see-through (2026-10-23)
+
+- `time.setAlpha(0.2f)` in `MainActivity.java`. Installed v2 and then v3; Home opens v3.
+- Undo: set it back to `0.9f` and run both installs again.
+
+## Smooth dock glow (no rings from the side), clock at 90% see-through (2026-10-23)
+
+- The focus glow was a plain radial gradient. The TV drew it in 1-level brightness steps about 22 px wide with no dithering, so from the side it showed concentric rings. It is now a mask built once at start-up (`glowMask()` in `MainActivity.java`) with fine noise in each pixel, then tinted to the app's colour. Steps are now about 3.5 px wide on average. The size, shape and strength are the same as before.
+- Clock: `time.setAlpha(0.1f)`, which is 90% see-through.
+- Installed with `sh v2.sh 192.0.2.10 install v2` and then `install v3`. Home opens v3.
+- Undo: `git diff src/com/ansub/tvhome/MainActivity.java` in mi-tv-declutter shows the glow change. Put the GradientDrawable glow back, set the clock alpha back to `0.2f`, then run both installs again.
+
+## 2026-10-23: PlayStation and Jio tiles, bigger clock, day and date (v2 and v3)
+
+- **Clock:** 50% bigger (font 100 px → 150 px). The day and date sit under it ("Friday, 23 October", 44 px). Both are 90% see-through.
+- **HDMI tiles:** the dock now accepts the entries `hdmi2` and `hdmi3`. Each opens that HDMI input the same way the Inputs menu does.
+  - Logos: `assets/logos/hdmi2.png` (PlayStation) and `assets/logos/hdmi3.png` (Jio), white, from Simple Icons.
+  - Names under the tiles: "PlayStation" and "Jio Set-Top Box", unless the input is given a name in Settings > Inputs.
+  - Glow colours: PlayStation blue and Jio blue.
+- **v3 dock order:** Apple TV, Prime Video, JioHotstar, Netflix, PlayStation (HDMI 2), Jio Set-Top Box (HDMI 3), ZEE5, Sony LIV, YouTube, AirDroid Cast, Miracast, Play Store, Add app.
+  - Command: `adb shell am start -n com.ansub.tvhome.v3/com.ansub.tvhome.MainActivity --es stamp "$(date +%s)" --es apps "com.apple.atve.androidtv.appletv,com.amazon.amazonvideo.livingroom,in.startv.hotstar,com.netflix.ninja,hdmi2,hdmi3,com.graymatrix.did,com.sonyliv,com.google.android.youtube.tv,com.sand.aircasttv,com.xiaomi.mitv.smartshare,com.android.vending"`
+- **Undo the order:** run the same command without `hdmi2,hdmi3,` (or remove the tiles with Hold OK > Remove).
+- **Undo the code:** in MainActivity.java:
+  - set the clock back to `px(100)`;
+  - remove the `date` TextClock and the `when` layout;
+  - remove `HDMI`, `HDMI_NAMES`, `hdmiInput()` and the `hdmi` branches in appList, buildTiles, open and labelOf;
+  - delete the two logo files.
+  - Then run `sh v2.sh 192.0.2.10 install v2` and `install v3`.
+
+## 2026-10-23: ZEE5 before Jio, smaller clock and date (v2 and v3)
+
+- **Clock and date:** both 20% smaller. The clock went from 150 px to 120 px, and the date from 44 px to 35 px.
+- **v3 dock order:** ZEE5 now comes before the Jio Set-Top Box. The order is Apple TV, Prime Video, JioHotstar, Netflix, PlayStation, ZEE5, Jio Set-Top Box, Sony LIV, YouTube, AirDroid Cast, Miracast, Play Store.
+- **Command:** the same `--es apps` command as above, with `...,hdmi2,com.graymatrix.did,hdmi3,com.sonyliv,...`.
+- **Undo:**
+  - Order: run the previous section's command.
+  - Sizes: set them back to `px(150)` and `px(44)`, then reinstall v2 and v3.
+
+## 2026-10-23: centred dot in the date, Home v3 mix set to Duotone 70% / Marquee 30%
+
+- The date under the clock now reads "Friday · 23 October" (a centred dot, not a comma). Both v2 and v3 reinstalled with `sh v2.sh 192.0.2.10 install v2`, then `install v3` (Home opens v3).
+- Home v3's mix is now a setting. Set it to 70 with:
+  `adb -s 192.0.2.10:5555 shell am start -n com.ansub.tvhome.v3/com.ansub.tvhome.MainActivity --es stamp "$(date +%s)" --es duotone 70`
+  (0 = Marquee only, 50 = the old even mix, 100 = Duotone only).
+
+**Undo:** run the same command with `--es duotone 50` for the old mix. For the comma, change `"EEEE '·' d MMMM"` back to `"EEEE, d MMMM"` (twice) in MainActivity.java and reinstall v2 and v3.
+
+## 2026-10-23: TV always starts on the home screen; time centred over the date
+
+- **Settings > Inputs > Input settings > "Stay on the previous source" turned OFF** (it was on, so the TV came back on HDMI 2/3 after power-on). The TV stores this as `settings get global set_auto_play` = 0.
+  **Undo:** turn the same switch back on (Settings > Inputs, bottom of the list).
+- The time is now centred over the day and date (it was left-aligned, so it sat left of the date's middle). The date's 8 px left nudge is gone. v2 and v3 reinstalled.
+  **Undo:** remove `time.setGravity(Gravity.CENTER_HORIZONTAL);` in MainActivity.java (and put back the date's `leftMargin = px(8)`), then reinstall v2 and v3.
+
+## 2026-10-23: focus sound on the dock
+
+- Cause: the dock is a `HorizontalScrollView`, which moves focus itself on Left/Right, so Android's focus click never played (system sounds were on, system volume 100).
+- Fix: `MainActivity.java`, dock's `HorizontalScrollView` overrides `arrowScroll` to call `playSoundEffect(...getContantForFocusDirection(dir))` when focus moves. Rebuilt and installed v2, then v3 at 19:07 (Home opens v3).
+- Undo: delete the `arrowScroll` override and the `SoundEffectConstants` import, then `sh v2.sh 192.0.2.10 install v2` and `install v3`.
+
+## 2026-10-23: TV goes to standby and sometimes won't wake (investigation, no TV change)
+
+- Code checked: the home app has no wake locks, sleep calls or power timers (`grep` for wake/power/sleep/standby/Receiver/Handler in `src/`). It can't put the TV to sleep or stop it waking. Memory fine: ~1 GB available, v3 uses ~118 MB.
+- What does put it to sleep: Xiaomi's `MitvPowerManagerService` "NoKeyInput mode", which runs off `system screen_off_timeout` = 1800000 (30 min without a remote press, set on 2026-10-20). Dreams/screensaver off, sleep_timeout -1, HDMI-CEC off, no other sleep timer.
+- Not waking until a mains reset: no crash record survives (dropbox and logcat are wiped by the power cut; pstore and tombstones need root). Firmware is from March 2024 (kernel 4.9.269), and the Widevine fault above also points at old firmware.
+- Recorder: `/tmp/tvlog.sh` (Mac, runs during a monitoring session) appends power, key, watchdog and memory-killer lines to `mi-tv-declutter/logs/tv.log`, reconnecting after drops. After the next freeze, the last lines before `=== lost` show what happened. Stop: `pkill -f tvlog.sh; pkill -f "logcat -v time"`.

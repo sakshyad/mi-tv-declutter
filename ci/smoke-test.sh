@@ -1,4 +1,5 @@
 #!/bin/sh
+# Version 1 only: use from the v1.0.0 tag, not the current v2/v3 build.
 # Installs the home screen on an Android TV (real or emulator) exactly like a user would,
 # then checks it works. Usage: sh ci/smoke-test.sh <adb serial or TV_IP> [screenshot.png]
 set -e

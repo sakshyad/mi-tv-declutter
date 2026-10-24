@@ -1,5 +1,7 @@
 package com.ansub.tvhome;
 
+import android.animation.ArgbEvaluator;
+import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.app.Dialog;
 import android.content.BroadcastReceiver;
@@ -11,8 +13,10 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.ColorDrawable;
@@ -33,30 +37,35 @@ import android.provider.Settings;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.KeyEvent;
+import android.view.SoundEffectConstants;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.view.Window;
+import android.view.animation.DecelerateInterpolator;
 import android.widget.BaseAdapter;
 import android.widget.FrameLayout;
+import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ListView;
-import android.widget.ScrollView;
 import android.widget.TextClock;
 import android.widget.TextView;
 
 import java.io.File;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.TreeMap;
 import java.util.List;
+import java.util.Map;
 
 public class MainActivity extends Activity {
 
     // Top-row apps, in this order of preference:
-    //  1. a list saved at install time:  am start -n com.ansub.tvhome/.MainActivity --es apps "pkg1,pkg2"
+    //  1. a list saved at install time:  am start -n com.ansub.tvhome.v2/com.ansub.tvhome.MainActivity --es apps "pkg1,pkg2"
     //     (--es apps auto  goes back to 2; add --es stamp <unique> so it's applied only once, see saveConfig)
     //  2. apps.txt (built in as Apps.LIST), topped up with other TV apps installed on this TV.
     // Missing apps are skipped. Topping up stops at six apps, but a chosen list can be any length:
@@ -66,14 +75,24 @@ public class MainActivity extends Activity {
     // it there, off until picked the same way:
     //   --es quick "bluetooth,sound,picture"
     // (--es quick none  takes them away again; "wifi" and "ethernet" are the network tile now).
+    // Home v3 mixes Duotone (the tinted wallpaper) and Marquee (the glow under the dock): --es duotone 70
+    // gives Duotone 70% and Marquee 30%. 50 is an even mix, 0 is Marquee only, 100 Duotone only.
     private static final String PREFS = "config";
     private static final List<String> NOT_APPS = Arrays.asList("com.android.vending", "com.android.tv.settings",
             "com.android.tv", "com.google.android.tvlauncher", "com.google.android.apps.tv.launcherx",
-            "com.google.android.leanbacklauncher");
+            "com.google.android.leanbacklauncher", "com.ansub.tvhome");
     private static final String PLAY_STORE = "com.android.vending";
     private static final String SETTINGS = "settings";
     private static final String INPUTS = "inputs";
     private static final String ADD = "add";
+    // A dock entry "hdmi2" opens HDMI 2, with assets/logos/hdmi2.png as its logo.
+    private static final String HDMI = "hdmi";
+    // What's plugged in here, named under its tile unless the input has a name set in Settings > Inputs.
+    private static final Map<String, String> HDMI_NAMES = new HashMap<>();
+    static {
+        HDMI_NAMES.put("hdmi2", "PlayStation");
+        HDMI_NAMES.put("hdmi3", "Jio Set-Top Box");
+    }
     private static final String[] EDIT_ITEMS = {"Move", "Replace", "Remove from home", "Uninstall"};
     private static final String[] EDIT_ITEMS_SYSTEM = {"Move", "Replace", "Remove from home", "App info"};
     private static final int PER_ROW = 6, MAX_INPUTS = 4;
@@ -89,18 +108,48 @@ public class MainActivity extends Activity {
     private static final String TCL_SHOW_WINDOW = "com.tcl.settings.SHOW_WINDOW";
 
     // Layout is designed at 1920x1080 and scaled to the TV's real UI size by px().
-    private static final int MARGIN = 96, GAP = 36, RADIUS = 22;
-    private static final int ROW1_TOP = 604, ROW_STEP = 224;
-    private static final int GRID_MIN_TOP = 400; // more rows push the grid up, but not into the clock
-    private static final int ICON_TOP = 76, ICON_BUTTON = 72, ICON_SIZE = 40, ICON_GAP = 12; // level with the date
+    private static final int SIDE = 112, RADIUS = 22; // clock and top icons sit SIDE in from the edges
+    private static final int ICON_TOP = 64, ICON_BUTTON = 80, ICON_SIZE = 38, ICON_GAP = 24; // level with the clock
+    // The dock: one row of white logos with no tiles, six cells on screen, sliding sideways for the rest.
+    // DOCK_TOP is where its scroller starts on screen; the cells sit CELL_TOP lower, so the glow above
+    // them still fits inside it.
+    private static final int DOCK_TOP = 545, DOCK_PAD = 84, CELL = 292, CELL_H = 170, CELL_TOP = 257, ON_SCREEN = 6;
+    private static final int LOGO_W = 250, LOGO_H = 124, LOGO_AREA = 112 * 112; // logo size limits, at 1x scale
+    private static final int GLOW = 1380, GLOW_H = 650, GLOW_Y = 325; // the glow's width, height and centre in the dock
+    private static final float FOCUS_SCALE = 1.16f, ICON_FOCUS_SCALE = 1.32f;
     private float scale = 1f;
+
+    // Each dock app's brand colour, for the glow behind it. Anything else glows soft white.
+    private static final Map<String, Integer> BRAND = new HashMap<>();
+    static {
+        BRAND.put("com.netflix.ninja", 0xE50914);
+        BRAND.put("com.amazon.amazonvideo.livingroom", 0x1FB6FF);
+        BRAND.put("in.startv.hotstar", 0x4F7BFF);
+        BRAND.put("com.graymatrix.did", 0x8230C6);
+        BRAND.put("com.sonyliv", 0xF5A623);
+        BRAND.put("com.apple.atve.androidtv.appletv", 0xE8E8ED);
+        BRAND.put("com.google.android.youtube.tv", 0xFF2D2D);
+        BRAND.put("com.sand.aircasttv", 0x2FBF71);
+        BRAND.put("com.xiaomi.mitv.smartshare", 0x0BB0B8);
+        BRAND.put("com.jio.media.stb.ondemand", 0xD6008A);
+        BRAND.put("com.android.vending", 0x34A853);
+        BRAND.put("hdmi2", 0x0070D1); // PlayStation
+        BRAND.put("hdmi3", 0x2A5CFF); // Jio set-top box
+    }
 
     private static Typeface regular, semibold;
 
-    private FrameLayout root; // the page, inside a vertical scroller
-    private int tileW, tileH, gridTop; // app grid geometry, set by buildTiles
+    private FrameLayout root; // the page
+    private HorizontalScrollView dock; // the dock's sideways scroller
+    private FrameLayout dockRow;       // inside it: the glow, then one cell per app
+    private View glow;
+    private BitmapDrawable glowShape;
+    private int glowColor = -1, firstCell; // firstCell: the leftmost cell on screen
+    private ValueAnimator glowFade;
+    private BitmapDrawable wallpaper; // null when the plain gradient is showing instead
     private final List<View> tiles = new ArrayList<>();
     private boolean dirty = true;
+    private int mix; // the --es duotone percentage, read in onCreate
     private java.util.Locale shownLocale; // the TV's language (and region) when the page was built
     private String focusedKey;
     private final List<String> rowApps = new ArrayList<>(); // the top row as shown, in order
@@ -134,40 +183,66 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle state) {
         super.onCreate(state);
         saveConfig(getIntent());
+        mix = Variant.DUOTONE ? getSharedPreferences(PREFS, 0).getInt("duotone", 50) : 0;
         loadFonts();
         scale = getResources().getDisplayMetrics().widthPixels / 1920f;
         getWindow().setBackgroundDrawable(background());
 
-        ScrollView scroller = new ScrollView(this);
-        scroller.setFillViewport(true);
-        scroller.setVerticalScrollBarEnabled(false);
-        scroller.setOverScrollMode(View.OVER_SCROLL_NEVER);
-        scroller.setClipChildren(false);
         root = new FrameLayout(this);
         root.setClipChildren(false);
-        scroller.addView(root, new FrameLayout.LayoutParams(-1, -2));
 
-        LinearLayout clock = new LinearLayout(this);
-        clock.setOrientation(LinearLayout.VERTICAL);
+        // The time, top left, always 24-hour, in the original home screen's clock font, and the day and
+        // date under it (like "Friday · 23 October"), both 90% see-through. The time is centred over the
+        // date, so the two line up whatever the day and month are.
         shownLocale = java.util.Locale.getDefault();
-        String day = Strings.datePattern();
-        TextClock date = clock(day, day, px(30), 0xA8FFFFFF, regular);
-        TextClock time = clock("h:mm", "H:mm", px(176), Color.WHITE, semibold);
-        time.setLetterSpacing(-0.028f);
+        TextClock time = clock("HH:mm", "HH:mm", px(120), Color.WHITE, semibold);
         time.setFontFeatureSettings("tnum");
         time.setIncludeFontPadding(false);
-        clock.addView(date);
-        LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(-2, -2);
-        tp.topMargin = px(-20); // pull the big digits up under the date
-        clock.addView(time, tp);
-        root.addView(clock, at(px(MARGIN), px(92), -2, -2));
+        TextClock date = clock("EEEE '·' d MMMM", "EEEE '·' d MMMM", px(35), Color.WHITE, semibold);
+        date.setIncludeFontPadding(false);
+        android.widget.LinearLayout when = new android.widget.LinearLayout(this);
+        when.setOrientation(android.widget.LinearLayout.VERTICAL);
+        when.setAlpha(0.1f);
+        time.setGravity(Gravity.CENTER_HORIZONTAL);
+        when.addView(time);
+        when.addView(date);
+        ((android.widget.LinearLayout.LayoutParams) date.getLayoutParams()).topMargin = px(14);
+        root.addView(when, at(px(SIDE), px(72), -2, -2));
+
+        // The dock scrolls itself (see showCell), so stop the scroller's own jump to the focused cell.
+        dock = new HorizontalScrollView(this) {
+            @Override protected int computeScrollDeltaToGetChildRectOnScreen(Rect r) { return 0; }
+            // The scroller moves focus itself on Left/Right, which skips Android's focus click; play it here.
+            @Override public boolean arrowScroll(int dir) {
+                boolean moved = super.arrowScroll(dir);
+                if (moved) playSoundEffect(SoundEffectConstants.getContantForFocusDirection(dir));
+                return moved;
+            }
+        };
+        dock.setHorizontalScrollBarEnabled(false);
+        dock.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        dock.setFocusable(false);
+        // A logo cut by the screen edge fades out there, hinting that the row goes on.
+        dock.setHorizontalFadingEdgeEnabled(true);
+        dock.setFadingEdgeLength(px(DOCK_PAD + 80));
+        dockRow = new FrameLayout(this);
+        dockRow.setClipChildren(false);
+        dock.addView(dockRow, new FrameLayout.LayoutParams(-2, -1));
+        root.addView(dock, at(0, px(DOCK_TOP), -1, getResources().getDisplayMetrics().heightPixels - px(DOCK_TOP)));
+
+        // A soft light in the focused app's colour behind the logos: an oval that fades out to its edge.
+        glowShape = new BitmapDrawable(getResources(), glowMask(px(GLOW), px(GLOW_H), Variant.DUOTONE ? (100 - mix) / 50f : 1));
+        glowShape.setTint(0);
+        glow = new View(this);
+        glow.setBackground(glowShape);
+        dockRow.addView(glow, at(0, px(GLOW_Y) - px(GLOW_H) / 2, px(GLOW), px(GLOW_H)));
 
         moveHint = text(px(24), 0xA8FFFFFF, regular);
         moveHint.setText(Strings.t("Use the arrows to move it, then press OK"));
         moveHint.setVisibility(View.GONE);
-        root.addView(moveHint, at(px(MARGIN), px(ROW1_TOP - 64), -2, -2));
+        root.addView(moveHint, at(px(SIDE), px(DOCK_TOP + CELL_TOP - 80), -2, -2));
 
-        setContentView(scroller);
+        setContentView(root);
 
         IntentFilter f = new IntentFilter();
         f.addAction(Intent.ACTION_PACKAGE_ADDED);
@@ -196,7 +271,10 @@ public class MainActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        if (saveConfig(intent)) buildTiles();
+        if (saveConfig(intent)) {
+            if (Variant.DUOTONE && getSharedPreferences(PREFS, 0).getInt("duotone", 50) != mix) recreate();
+            else buildTiles();
+        }
     }
 
     // Saves an app list passed with --es apps "..." and shortcuts passed with --es quick "...".
@@ -206,7 +284,8 @@ public class MainActivity extends Activity {
     private boolean saveConfig(Intent intent) {
         String apps = intent == null ? null : intent.getStringExtra("apps");
         String quick = intent == null ? null : intent.getStringExtra("quick");
-        if (apps == null && quick == null) return false;
+        String duotone = intent == null ? null : intent.getStringExtra("duotone");
+        if (apps == null && quick == null && duotone == null) return false;
         SharedPreferences prefs = getSharedPreferences(PREFS, 0);
         String stamp = intent.getStringExtra("stamp");
         if (stamp != null && stamp.equals(prefs.getString("stamp", null))) return false;
@@ -222,6 +301,10 @@ public class MainActivity extends Activity {
             if (quick.isEmpty() || quick.equalsIgnoreCase("none")) e.remove("quick");
             else e.putString("quick", quick);
         }
+        if (duotone != null) {
+            try { e.putInt("duotone", Math.max(0, Math.min(100, Integer.parseInt(duotone.trim())))); }
+            catch (NumberFormatException bad) { e.remove("duotone"); } // anything else goes back to 50
+        }
         e.apply();
         dirty = true;
         return true;
@@ -231,7 +314,7 @@ public class MainActivity extends Activity {
         List<String> out = new ArrayList<>();
         String saved = getSharedPreferences(PREFS, 0).getString("apps", null);
         String[] wanted = saved != null ? saved.split("[,\\s]+") : Apps.LIST;
-        for (String p : wanted) if (!p.isEmpty() && !out.contains(p) && launchIntent(pm, p) != null) out.add(p);
+        for (String p : wanted) if (!p.isEmpty() && !out.contains(p) && (p.startsWith(HDMI) ? hdmiInput(p) != null : launchIntent(pm, p) != null)) out.add(p);
         if (saved == null) {
             // Top up with other TV apps people installed (or updated), skipping launchers and system tools.
             Intent q = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER);
@@ -286,8 +369,36 @@ public class MainActivity extends Activity {
     @Override
     public void onBackPressed() { /* home screen: nothing to go back to */ }
 
-    // Static warm gradient, drawn once by the window: no extra view, no animation.
+    // The wallpaper (assets/wallpaper.jpg), with black fading in over the lower half so the dock sits on
+    // dark. Drawn once by the window: no extra view, no animation. Decoded at screen size in full 32-bit
+    // colour, so a 4K image costs no more memory than a 1080p one and dark areas don't band as much.
     private Drawable background() {
+        int sw = getResources().getDisplayMetrics().widthPixels, sh = getResources().getDisplayMetrics().heightPixels;
+        Bitmap wall = null;
+        BitmapFactory.Options o = new BitmapFactory.Options();
+        o.inPreferredConfig = Bitmap.Config.ARGB_8888;
+        o.inJustDecodeBounds = true;
+        try (InputStream in = getAssets().open("wallpaper.jpg")) {
+            BitmapFactory.decodeStream(in, null, o);
+        } catch (Exception ignored) {}
+        o.inSampleSize = 1;
+        while (o.outWidth / (o.inSampleSize * 2) >= sw && o.outHeight / (o.inSampleSize * 2) >= sh) o.inSampleSize *= 2;
+        o.inJustDecodeBounds = false;
+        if (o.outWidth > 0) try (InputStream in = getAssets().open("wallpaper.jpg")) {
+            wall = BitmapFactory.decodeStream(in, null, o);
+        } catch (Exception | OutOfMemoryError ignored) {}
+        if (wall == null) return gradientBackground();
+        // ponytail: stretched to the screen, fine for a 16:9 wallpaper on a 16:9 TV; crop if that ever changes
+        GradientDrawable shade = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[] {0, 0, 0x59000000, 0xB3000000, 0xD9000000});
+        shade.setDither(true);
+        wallpaper = new BitmapDrawable(getResources(), wall);
+        wallpaper.setColorFilter(blackPoint(new float[] {1,0,0,0,0, 0,1,0,0,0, 0,0,1,0,0, 0,0,0,1,0}));
+        return new LayerDrawable(new Drawable[] {wallpaper, shade});
+    }
+
+    // The original warm gradient, if the wallpaper can't be loaded.
+    private Drawable gradientBackground() {
         GradientDrawable base = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
                 new int[] {0xFF15100F, 0xFF0A0809, 0xFF050405});
         GradientDrawable warm = radial(0x36FF8048, 0.08f, -0.12f, px(1250));
@@ -321,58 +432,49 @@ public class MainActivity extends Activity {
         moveHint.setVisibility(View.GONE);
 
         PackageManager pm = getPackageManager();
-        int m = px(MARGIN), g = px(GAP);
-        int w = (getResources().getDisplayMetrics().widthPixels - 2 * m - g * (PER_ROW - 1)) / PER_ROW;
-        int h = w * 9 / 16;
-        tileW = w;
-        tileH = h;
-
         List<String> apps = appList(pm);
-        // Apps fill rows of six, then Play Store (if not among them) and Add app take the next free
-        // slots. With more rows the grid starts higher, so up to three rows fit; past that the page scrolls.
-        int launchable = 0;
-        for (String pkg : apps) if (launchIntent(pm, pkg) != null) launchable++;
-        boolean store = !apps.contains(PLAY_STORE) && launchIntent(pm, PLAY_STORE) != null;
-        int rows = (launchable + (store ? 2 : 1) + PER_ROW - 1) / PER_ROW;
-        gridTop = Math.max(px(GRID_MIN_TOP), px(ROW1_TOP) - (rows - 1) * px(ROW_STEP));
-        ((FrameLayout.LayoutParams) moveHint.getLayoutParams()).topMargin = gridTop - px(64);
-        root.setMinimumHeight(gridTop + (rows - 1) * px(ROW_STEP) + h + px(MARGIN));
 
+        // One row: the apps, then Play Store (if not among them) and Add app. The dock slides
+        // sideways once there are more than six.
         for (String pkg : apps) {
+            if (pkg.startsWith(HDMI)) {
+                rowApps.add(pkg);
+                addTile(pkg, labelOf(pkg), logo(pkg), null, logo(pkg) == null ? LineIcon.HDMI : null, rowApps.size() - 1);
+                continue;
+            }
             Intent li = launchIntent(pm, pkg);
             if (li == null) continue;
-            Drawable banner = null;
-            try {
-                banner = pm.getActivityBanner(li);
-                if (banner == null) banner = pm.getApplicationBanner(pkg);
-            } catch (Exception ignored) {}
             String label = pkg;
             try { label = pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString(); } catch (Exception ignored) {}
-            // Apps without a TV banner get a plain tile with their normal icon.
-            Drawable icon = null;
-            if (banner == null) try { icon = pm.getApplicationIcon(pkg); } catch (Exception ignored) {}
+            // An app with no white logo in assets/logos shows its TV banner (or icon) small instead.
+            Drawable logo = logo(pkg), banner = null;
+            if (logo == null) try {
+                banner = pm.getActivityBanner(li);
+                if (banner == null) banner = pm.getApplicationBanner(pkg);
+                if (banner == null) banner = pm.getApplicationIcon(pkg);
+            } catch (Exception ignored) {}
             int i = rowApps.size();
             rowApps.add(pkg);
-            addTile(root, pkg, label, banner, null, icon, gridX(i), gridY(i), w, h);
+            addTile(pkg, label, logo, banner, null, i);
         }
-
-        // Play Store and Add app follow the apps in the same grid. HDMI inputs and Settings are icons at the top.
         int slot = rowApps.size();
-        if (store) {
-            addTile(root, PLAY_STORE, "Play Store", null, LineIcon.PLAY, null, gridX(slot), gridY(slot), w, h);
-            slot++;
+        if (!apps.contains(PLAY_STORE) && launchIntent(pm, PLAY_STORE) != null) {
+            Drawable logo = logo(PLAY_STORE);
+            addTile(PLAY_STORE, "Play Store", logo, null, logo == null ? LineIcon.PLAY : null, slot++);
         }
-        addTile(root, ADD, Strings.t("Add app"), null, LineIcon.PLUS, null, gridX(slot), gridY(slot), w, h);
+        addTile(ADD, Strings.t("Add app"), null, null, LineIcon.PLUS, slot++);
+        dockRow.setMinimumWidth(2 * px(DOCK_PAD) + slot * px(CELL));
+        firstCell = 0;
 
-        // Plain icons at the top right, level with the date: any settings shortcuts picked, Inputs
+        // Bare icons at the top right, level with the clock: any settings shortcuts picked, Inputs
         // (when the TV has HDMI), Settings, then the network icon. Added last, so the first app keeps
-        // first focus; Up from the apps reaches them.
+        // first focus; Up from the dock reaches them.
         List<Integer> quick = quickList();
         boolean hasInputs = !hdmiInputs().isEmpty();
         int n = quick.size() + (hasInputs ? 1 : 0) + 2;
         int ib = px(ICON_BUTTON), ig = px(ICON_GAP);
-        // The last icon's right edge lines up with the apps' (its focus circle sticks out past them).
-        int qx = getResources().getDisplayMetrics().widthPixels - m + (ib - px(ICON_SIZE)) / 2
+        // The last icon's right edge sits SIDE in from the screen edge.
+        int qx = getResources().getDisplayMetrics().widthPixels - px(SIDE) + (ib - px(ICON_SIZE)) / 2
                 - n * ib - (n - 1) * ig;
         for (int q : quick) {
             addIcon(QUICK + QUICK_NAMES[q], Strings.t(QUICK_LABELS[q]), new LineIcon(QUICK_ICONS[q]), qx);
@@ -397,59 +499,56 @@ public class MainActivity extends Activity {
         if (restore != null) restore.requestFocus();
     }
 
-    private void addTile(ViewGroup parent, final String key, String label, Drawable banner, int[] lineIcon, Drawable appIcon,
-                         int x, int y, int w, int h) {
+    // One dock cell, number i: a white logo floating on the wallpaper, no tile behind it. Without a logo
+    // it shows the app's banner small (with rounded corners), or a line icon (Play Store, Add app).
+    // Focused, it grows a little and its name fades in underneath; the glow follows it.
+    private void addTile(final String key, String label, Drawable logo, Drawable banner, int[] lineIcon, int i) {
+        int w = px(CELL), h = px(CELL_H);
         FrameLayout card = new FrameLayout(this);
-        final GradientDrawable bg = new GradientDrawable();
-        bg.setCornerRadius(px(RADIUS));
-        if (banner != null) {
-            bg.setColor(0xFF1E1A1C);
-            ImageView iv = new ImageView(this);
-            iv.setImageDrawable(fit(banner, w, h));
-            card.addView(iv, new FrameLayout.LayoutParams(-1, -1));
+        final ImageView iv = new ImageView(this);
+        FrameLayout.LayoutParams ip;
+        if (logo != null) {
+            iv.setImageDrawable(logo);
+            ip = new FrameLayout.LayoutParams(logo.getIntrinsicWidth(), logo.getIntrinsicHeight(), Gravity.CENTER);
+        } else if (banner != null) {
+            int bw = px(LOGO_W) * 4 / 5, bh = bw * 9 / 16;
+            iv.setImageDrawable(fit(banner, bw, bh));
+            GradientDrawable round = new GradientDrawable();
+            round.setCornerRadius(px(RADIUS) / 2f);
+            iv.setBackground(round);
+            iv.setClipToOutline(true);
+            ip = new FrameLayout.LayoutParams(bw, bh, Gravity.CENTER);
         } else {
-            // Quiet "glass" tile: icon above label.
-            bg.setColor(0x13FFFFFF);
-            bg.setStroke(Math.max(1, px(2)), 0x17FFFFFF);
-            LinearLayout inner = new LinearLayout(this);
-            inner.setOrientation(LinearLayout.VERTICAL);
-            inner.setGravity(Gravity.CENTER);
-            ImageView iv = new ImageView(this);
-            int size = lineIcon != null ? px(44) : px(64);
-            if (lineIcon != null) iv.setImageDrawable(new LineIcon(lineIcon));
-            else if (appIcon != null) iv.setImageDrawable(fit(appIcon, size, size));
-            inner.addView(iv, new LinearLayout.LayoutParams(size, size));
-            TextView t = text(px(24), 0xE0FFFFFF, regular);
-            t.setText(label);
-            t.setSingleLine(true);
-            t.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            t.setGravity(Gravity.CENTER);
-            t.setPadding(px(16), 0, px(16), 0);
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
-            lp.topMargin = px(12);
-            inner.addView(t, lp);
-            card.addView(inner, new FrameLayout.LayoutParams(-1, -1));
+            iv.setImageDrawable(new LineIcon(lineIcon));
+            ip = new FrameLayout.LayoutParams(px(72), px(72), Gravity.CENTER);
         }
-        card.setBackground(bg);
-        card.setClipToOutline(true);
+        iv.setAlpha(0.72f);
+        card.addView(iv, ip);
         card.setFocusable(true);
         card.setTag(key);
+        card.setContentDescription(label);
 
-        // Banner tiles show their name underneath when focused.
-        final TextView caption = banner == null ? null : text(px(24), Color.WHITE, regular);
-        if (caption != null) {
-            caption.setText(label);
-            caption.setGravity(Gravity.CENTER_HORIZONTAL);
-            caption.setVisibility(View.INVISIBLE);
-        }
+        final TextView caption = text(px(30), 0xF2FFFFFF, outfit(500, regular));
+        caption.setText(label);
+        caption.setSingleLine(true);
+        caption.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        caption.setGravity(Gravity.CENTER_HORIZONTAL);
+        caption.setAlpha(0f);
+        caption.setTranslationY(px(6));
 
-        final boolean glass = banner == null;
+        final int color = BRAND.containsKey(key) ? BRAND.get(key) : 0xFFFFFF;
+        final DecelerateInterpolator ease = new DecelerateInterpolator(2f);
         card.setOnFocusChangeListener((v, has) -> {
-            if (has) focusedKey = key;
-            if (glass) bg.setColor(has ? 0x38FFFFFF : 0x13FFFFFF);
-            v.animate().scaleX(has ? 1.1f : 1f).scaleY(has ? 1.1f : 1f).translationZ(has ? px(26) : 0)
-                    .setDuration(140).withLayer().start();
-            if (caption != null) caption.setVisibility(has ? View.VISIBLE : View.INVISIBLE);
+            if (has) {
+                focusedKey = key;
+                showCell((((FrameLayout.LayoutParams) ((View) v.getParent()).getLayoutParams()).leftMargin
+                        - px(DOCK_PAD)) / px(CELL), color);
+            }
+            v.animate().scaleX(has ? FOCUS_SCALE : 1f).scaleY(has ? FOCUS_SCALE : 1f)
+                    .setDuration(240).setInterpolator(ease).withLayer().start();
+            iv.animate().alpha(has ? 1f : 0.72f).setDuration(240).start();
+            caption.animate().alpha(has ? 1f : 0f).translationY(has ? 0 : px(6))
+                    .setDuration(has ? 220 : 120).setInterpolator(ease).start();
         });
         final boolean editable = rowApps.contains(key);
         card.setOnClickListener(v -> open(key));
@@ -480,33 +579,106 @@ public class MainActivity extends Activity {
         FrameLayout wrap = new FrameLayout(this);
         wrap.setClipChildren(false);
         wrap.addView(card, new FrameLayout.LayoutParams(w, h));
-        if (caption != null) {
-            FrameLayout.LayoutParams cp = new FrameLayout.LayoutParams(w, -2);
-            cp.topMargin = h + px(22);
-            wrap.addView(caption, cp);
-        }
-        parent.addView(wrap, at(x, y, w, -2));
+        FrameLayout.LayoutParams cp = new FrameLayout.LayoutParams(w, -2);
+        cp.topMargin = h + px(12);
+        wrap.addView(caption, cp);
+        dockRow.addView(wrap, at(gridX(i), gridY(i), w, -2));
         tiles.add(card);
     }
 
-    // An icon on its own, no tile or label: a glass circle shows behind it only while it's focused.
+    // The dock follows focus: the glow slides to cell i and takes its colour, and the row slides
+    // sideways just enough to keep cell i among the six on screen.
+    private void showCell(int i, int color) {
+        if (i < firstCell) firstCell = i;
+        else if (i >= firstCell + ON_SCREEN) firstCell = i - ON_SCREEN + 1;
+        final int x = firstCell * px(CELL);
+        dock.post(() -> dock.smoothScrollTo(x, 0));
+        DecelerateInterpolator ease = new DecelerateInterpolator(2f);
+        glow.animate().translationX(gridX(i) + px(CELL) / 2f - px(GLOW) / 2f).alpha(1f)
+                .setDuration(glowColor < 0 ? 0 : 420).setInterpolator(ease).start();
+        if (color == glowColor) return;
+        if (glowFade != null) glowFade.cancel();
+        final int from = glowColor < 0 ? color : glowColor;
+        glowColor = color;
+        glowFade = ValueAnimator.ofObject(new ArgbEvaluator(), from, color);
+        glowFade.setDuration(420);
+        glowFade.addUpdateListener(a -> {
+            int c = (Integer) a.getAnimatedValue() & 0xFFFFFF;
+            glowShape.setTint(0xFF000000 | c);
+            if (Variant.DUOTONE && wallpaper != null) wallpaper.setColorFilter(duotone(c));
+        });
+        glowFade.start();
+    }
+
+    // The glow's shape: 24% in the middle, 6% halfway out, clear at the edge (times strength). A plain gradient this faint
+    // is drawn in 1-level steps that show as rings when the TV is seen from the side (the TV's GPU ignores
+    // dither), so each pixel gets a little noise to break the steps up. Built once; tinting it is free.
+    private static Bitmap glowMask(int w, int h, float strength) {
+        byte[] a = new byte[w * h];
+        java.util.Random noise = new java.util.Random(1);
+        float rx = w / 2f, ry = h / 2f;
+        for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) {
+            float dx = (x + 0.5f - rx) / rx, dy = (y + 0.5f - ry) / ry, r = (float) Math.sqrt(dx * dx + dy * dy);
+            float v = strength * (r < 0.5f ? 61 - 46 * r / 0.5f : r < 1 ? 15 * (1 - r) / 0.5f : 0);
+            if (v > 0) a[y * w + x] = (byte) Math.min(255, (int) (v + noise.nextFloat()));
+        }
+        Bitmap b = Bitmap.createBitmap(w, h, Bitmap.Config.ALPHA_8);
+        b.copyPixelsFromBuffer(java.nio.ByteBuffer.wrap(a));
+        return b;
+    }
+
+    // Home v3: tints the black-and-white wallpaper in an app's colour (45% at an even mix, 90% at Duotone
+    // only), keeping its light and dark
+    // (like a "color" blend). One colour filter on the image the window already draws, so it costs nothing.
+    private android.graphics.ColorMatrixColorFilter duotone(int rgb) {
+        float r = (rgb >> 16 & 0xFF) / 255f, g = (rgb >> 8 & 0xFF) / 255f, b = (rgb & 0xFF) / 255f;
+        float lum = Math.max(0.05f, 0.299f * r + 0.587f * g + 0.114f * b), s = 0.9f * mix / 100;
+        // A dark colour like Netflix red needs a big push to keep the brightness, and that burns the cowl
+        // out to flat red while the chest stays dark, so the figure seems to jump up. Capping the push
+        // keeps every colour's highlights clear; dark colours just tint a little darker.
+        float push = Math.min(1f, 2f / (Math.max(r, Math.max(g, b)) / lum));
+        float[] k = {r / lum * push, g / lum * push, b / lum * push}, m = new float[20];
+        for (int row = 0; row < 3; row++) {
+            m[row * 5] = s * k[row] * 0.299f;
+            m[row * 5 + 1] = s * k[row] * 0.587f;
+            m[row * 5 + 2] = s * k[row] * 0.114f;
+            m[row * 5 + row] += 1 - s; // the rest stays the original colour
+        }
+        m[18] = 1; // alpha unchanged
+        return blackPoint(m);
+    }
+
+    // The wallpaper has a faint grey haze around Batman (levels 4-20 of 255) that the TV lifts into
+    // visible faded colour. Everything that dark becomes true black; the rest stretches back to full range.
+    private static android.graphics.ColorMatrixColorFilter blackPoint(float[] m) {
+        float cut = 20f, gain = 255f / (255f - cut);
+        for (int row = 0; row < 3; row++) {
+            for (int col = 0; col < 5; col++) m[row * 5 + col] *= gain;
+            m[row * 5 + 4] -= cut * gain;
+        }
+        return new android.graphics.ColorMatrixColorFilter(m);
+    }
+
+    // A bare icon, no tile, label or circle: it grows a little while focused. The dock glow dims then.
     private ImageView addIcon(final String key, String label, Drawable icon, int x) {
         int b = px(ICON_BUTTON), size = px(ICON_SIZE);
         FrameLayout card = new FrameLayout(this);
-        final GradientDrawable bg = new GradientDrawable();
-        bg.setShape(GradientDrawable.OVAL);
-        bg.setColor(Color.TRANSPARENT);
-        card.setBackground(bg);
-        ImageView iv = new ImageView(this);
+        final ImageView iv = new ImageView(this);
         iv.setImageDrawable(icon);
+        iv.setAlpha(0.85f);
         card.addView(iv, new FrameLayout.LayoutParams(size, size, Gravity.CENTER));
         card.setFocusable(true);
         card.setTag(key);
         card.setContentDescription(label);
+        final DecelerateInterpolator ease = new DecelerateInterpolator(2f);
         card.setOnFocusChangeListener((v, has) -> {
-            if (has) focusedKey = key;
-            bg.setColor(has ? 0x38FFFFFF : Color.TRANSPARENT);
-            v.animate().scaleX(has ? 1.1f : 1f).scaleY(has ? 1.1f : 1f).setDuration(140).withLayer().start();
+            if (has) {
+                focusedKey = key;
+                glow.animate().alpha(0.45f).setDuration(420).start();
+            }
+            iv.animate().alpha(has ? 1f : 0.85f).setDuration(220).start();
+            v.animate().scaleX(has ? ICON_FOCUS_SCALE : 1f).scaleY(has ? ICON_FOCUS_SCALE : 1f)
+                    .setDuration(220).setInterpolator(ease).withLayer().start();
         });
         card.setOnClickListener(v -> open(key));
         FrameLayout wrap = new FrameLayout(this);
@@ -529,6 +701,10 @@ public class MainActivity extends Activity {
             return;
         } else if (NETWORK.equals(key)) {
             openNetworkSettings();
+            return;
+        } else if (key.startsWith(HDMI)) {
+            TvInputInfo in = hdmiInput(key);
+            if (in != null) openInput(in.getId());
             return;
         } else if (key.startsWith(QUICK)) {
             openQuick(key.substring(QUICK.length()));
@@ -875,6 +1051,12 @@ public class MainActivity extends Activity {
     }
 
     private String labelOf(String pkg) {
+        if (pkg.startsWith(HDMI)) {
+            TvInputInfo in = hdmiInput(pkg);
+            CharSequence custom = in == null ? null : in.loadCustomLabel(this);
+            if (custom != null && custom.length() > 0) return custom.toString();
+            return HDMI_NAMES.containsKey(pkg) ? HDMI_NAMES.get(pkg) : in == null ? pkg : inputLabel(in);
+        }
         PackageManager pm = getPackageManager();
         try { return pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString(); }
         catch (Exception e) { return pkg; }
@@ -885,13 +1067,13 @@ public class MainActivity extends Activity {
         getSharedPreferences(PREFS, 0).edit().putString("apps", android.text.TextUtils.join(",", rowApps)).apply();
     }
 
-    // Where app number i sits in the grid.
+    // Where cell number i sits in the dock.
     private int gridX(int i) {
-        return px(MARGIN) + (i % PER_ROW) * (tileW + px(GAP));
+        return px(DOCK_PAD) + i * px(CELL);
     }
 
     private int gridY(int i) {
-        return gridTop + (i / PER_ROW) * px(ROW_STEP);
+        return px(CELL_TOP);
     }
 
     private View tile(String key) {
@@ -899,7 +1081,7 @@ public class MainActivity extends Activity {
         return null;
     }
 
-    // Move mode: the tile gets an outline, the arrows move it through the grid, OK or Back finishes.
+    // Move mode: the tile gets an outline, Left and Right move it along the dock, OK or Back finishes.
     private void startMove(String key) {
         View card = tile(key);
         if (card == null) return;
@@ -913,8 +1095,7 @@ public class MainActivity extends Activity {
     }
 
     private boolean moveKey(String key, int code, boolean ok, boolean down) {
-        int step = code == KeyEvent.KEYCODE_DPAD_LEFT ? -1 : code == KeyEvent.KEYCODE_DPAD_RIGHT ? 1
-                : code == KeyEvent.KEYCODE_DPAD_UP ? -PER_ROW : code == KeyEvent.KEYCODE_DPAD_DOWN ? PER_ROW : 0;
+        int step = code == KeyEvent.KEYCODE_DPAD_LEFT ? -1 : code == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : 0;
         if (step != 0) {
             int from = rowApps.indexOf(key), to = from + step;
             if (down && to >= 0 && to < rowApps.size()) {
@@ -927,10 +1108,8 @@ public class MainActivity extends Activity {
                     lp.topMargin = gridY(i);
                     wrap.setLayoutParams(lp);
                 }
-                // Scroll along with it once it has moved.
-                final View card = tile(key);
-                card.post(() -> card.requestRectangleOnScreen(
-                        new android.graphics.Rect(0, 0, card.getWidth(), card.getHeight())));
+                // The dock and the glow go along with it.
+                showCell(to, BRAND.containsKey(key) ? BRAND.get(key) : 0xFFFFFF);
             }
             return true;
         }
@@ -958,6 +1137,15 @@ public class MainActivity extends Activity {
         }
         Collections.sort(out, (a, b) -> a.getId().compareTo(b.getId()));
         return out.size() > MAX_INPUTS ? out.subList(0, MAX_INPUTS) : out;
+    }
+
+    // The HDMI input a dock entry like "hdmi2" means: the second one, or null.
+    private TvInputInfo hdmiInput(String key) {
+        List<TvInputInfo> inputs = hdmiInputs();
+        try {
+            int n = Integer.parseInt(key.substring(HDMI.length()));
+            return n >= 1 && n <= inputs.size() ? inputs.get(n - 1) : null;
+        } catch (NumberFormatException e) { return null; }
     }
 
     // The name set in Settings > Inputs (like "Bedroom"), else the TV's own name (like "HDMI 1").
@@ -988,6 +1176,37 @@ public class MainActivity extends Activity {
     private static Typeface fromFile(String path, Typeface fallback) {
         try { return new File(path).exists() ? Typeface.createFromFile(path) : fallback; }
         catch (Exception e) { return fallback; }
+    }
+
+    // Outfit (assets/fonts, SIL Open Font License) at one weight. It's a single variable font, so the
+    // weight is picked when it's loaded. Android 7 and older get the fallback.
+    private final Map<Integer, Typeface> outfits = new HashMap<>();
+    private Typeface outfit(int weight, Typeface fallback) {
+        if (outfits.containsKey(weight)) return outfits.get(weight);
+        Typeface t = null;
+        if (android.os.Build.VERSION.SDK_INT >= 26) try {
+            t = new Typeface.Builder(getAssets(), "fonts/Outfit.ttf").setFontVariationSettings("'wght' " + weight).build();
+        } catch (Exception ignored) {}
+        if (t == null) t = fallback;
+        outfits.put(weight, t);
+        return t;
+    }
+
+    // An app's white logo from assets/logos/<package>.png, or null. Sized by visual weight: every logo
+    // covers about the same area, so a thin "N" and a wide wordmark look equally big. Never stretched.
+    private Drawable logo(String pkg) {
+        Bitmap b;
+        try (InputStream in = getAssets().open("logos/" + pkg + ".png")) { b = BitmapFactory.decodeStream(in); }
+        catch (Exception e) { return null; }
+        if (b == null) return null;
+        float r = (float) b.getWidth() / b.getHeight();
+        float h = (float) Math.sqrt(LOGO_AREA / r), w = h * r;
+        if (w > LOGO_W) { w = LOGO_W; h = w / r; }
+        if (h > LOGO_H) { h = LOGO_H; w = h * r; }
+        Bitmap s = Bitmap.createScaledBitmap(b, Math.max(1, Math.round(w * scale)), Math.max(1, Math.round(h * scale)), true);
+        if (s != b) b.recycle();
+        s.setDensity(Bitmap.DENSITY_NONE); // drawn at exactly this size
+        return new BitmapDrawable(getResources(), s);
     }
 
     // Draws a banner once into a tile-sized bitmap (center-cropped). Some apps ship huge banners

@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.ansub.tvhome" android:versionCode="10" android:versionName="1.4.0">
+    package="com.ansub.tvhome.v2" android:versionCode="1" android:versionName="2.0.0">
+    <!-- v2 has its own app ID, so it installs next to the original home screen. The Java code stays in
+         com.ansub.tvhome, so the activity is named in full below. Switch between them with v2.sh. -->
     <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="34" />
     <!-- Only for the network tile: Wi-Fi, Ethernet or offline, and the Wi-Fi signal. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -29,9 +31,9 @@
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
-    <application android:label="Home" android:allowBackup="false"
+    <application android:label="Home v2" android:allowBackup="false"
         android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen">
-        <activity android:name=".MainActivity"
+        <activity android:name="com.ansub.tvhome.MainActivity"
             android:exported="true"
             android:launchMode="singleTask" android:stateNotNeeded="true"
             android:clearTaskOnLaunch="true" android:excludeFromRecents="true"

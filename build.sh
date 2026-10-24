@@ -23,7 +23,15 @@ rm -rf out; mkdir -p out/classes out/dex out/gen/com/ansub/tvhome
   echo "}; }"
 } > out/gen/com/ansub/tvhome/Apps.java
 
-"$BT/aapt2" link -o out/base.apk -I "$JAR" --manifest AndroidManifest.xml --min-sdk-version 21 --target-sdk-version 34
+# VARIANT=v3 builds Home v3: the same home screen with the wallpaper tinted in the focused app's
+# colour, under its own app ID so v2 and v3 can both be installed.
+VARIANT=${VARIANT:-v2}
+case "$VARIANT" in v2|v3) ;; *) echo "VARIANT must be v2 or v3" >&2; exit 1 ;; esac
+echo "package com.ansub.tvhome; final class Variant { static final boolean DUOTONE = $([ "$VARIANT" = v3 ] && echo true || echo false); }" \
+  > out/gen/com/ansub/tvhome/Variant.java
+sed "s/com\.ansub\.tvhome\.v2\"/com.ansub.tvhome.$VARIANT\"/; s/\"Home v2\"/\"Home $VARIANT\"/" AndroidManifest.xml > out/AndroidManifest.xml
+
+"$BT/aapt2" link -o out/base.apk -I "$JAR" --manifest out/AndroidManifest.xml -A assets --min-sdk-version 21 --target-sdk-version 34
 # shellcheck disable=SC2046 # javac and d8 want one argument per file, so the list is split on purpose
 javac -nowarn -Xlint:-options -encoding UTF-8 -source 1.8 -target 1.8 -bootclasspath "$JAR:$BT/core-lambda-stubs.jar" \
   -d out/classes $(find src out/gen -name "*.java")
@@ -38,4 +46,4 @@ KS=${KEYSTORE:-key.jks}; PASS=${KEYSTORE_PASS:-tvhome123}
 [ -f "$KS" ] || keytool -genkeypair -keystore "$KS" -storepass "$PASS" -keypass "$PASS" -alias tvhome \
   -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=tvhome" >/dev/null 2>&1
 "$BT/apksigner" sign --ks "$KS" --ks-pass "pass:$PASS" --out out/tvhome.apk out/aligned.apk
-echo "Built out/tvhome.apk"
+echo "Built out/tvhome.apk (Home $VARIANT)"
