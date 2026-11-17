@@ -67,7 +67,12 @@ sh v2.sh TV_IP remove   # switches to v1, then removes v2 and v3
 sh candidates.sh TV_IP             # read-only package survey
 sh check.sh TV_IP my-tv.txt        # inspect the saved cleanup state
 sh check.sh TV_IP --fix my-tv.txt  # apply the saved settings and disable listed apps
+sh check.sh TV_IP --fix --home v3 my-tv.txt  # explicitly restore Home v3
 ```
+
+The check accepts whichever Mi TV Declutter variant is already handling Home. If Home opens another app and several variants are installed, use `--home v1`, `--home v2` or `--home v3` to select the one to restore. The Mi TV settings in `my-tv.txt` include turning off **Stay on the previous source** so the TV starts on Home.
+
+On the MiTV-AXSO2, `my-tv.txt` also checks that the original Google home screen and Xiaomi PatchWall are disabled. The original Home app is checked even when there is no launcher list from the v1 installer.
 
 Review `my-tv.txt` before applying it: it reflects my hardware and app choices, including accessibility and sleep settings. Keep the stock launcher, input services and recovery path available until the replacement works. The report explains individual undo commands; launcher removal alone does not undo every manual cleanup change.
 
